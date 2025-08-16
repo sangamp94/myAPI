@@ -1,20 +1,44 @@
-import fs from "fs";
-import path from "path";
+const express = require("express");
+const fs = require("fs");
+const app = express();
+const PORT = process.env.PORT || 3000;
 
-export default function handler(req, res) {
+// GET endpoint
+app.get("/episodes", (req, res) => {
   try {
-    // JSON file ka path lo
-    const filePath = path.join(process.cwd(), "data.json");
+    const html = fs.readFileSync("table.html", "utf-8");
+    const rowRegex = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
+    const rows = [...html.matchAll(rowRegex)];
 
-    // File read karo
-    const jsonData = fs.readFileSync(filePath, "utf-8");
+    const data = [];
 
-    // Parse JSON
-    const data = JSON.parse(jsonData);
+    rows.forEach(row => {
+      const rowContent = row[1];
 
-    res.status(200).json(data);
-  } catch (error) {
-    console.error("Error loading JSON:", error);
-    res.status(500).json({ error: "Failed to load data" });
+      const linkMatch = rowContent.match(/<a href="([^"]+)">([^<]+)<\/a>/i);
+      if (!linkMatch) return;
+
+      const href = linkMatch[1];
+      const title = linkMatch[2];
+
+      if (!href.toLowerCase().endsWith(".mp4")) return;
+
+      const dateMatch = rowContent.match(/<td>(\d{2}-\w{3}-\d{4} \d{2}:\d{2})<\/td>/i);
+      const date = dateMatch ? dateMatch[1] : "";
+
+      const sizeMatch = rowContent.match(/<td>([\d\.]+M)<\/td>/i);
+      const size = sizeMatch ? sizeMatch[1] : "";
+
+      data.push({ href, title, date, size });
+    });
+
+    res.json(data); // JSON response
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to parse table" });
   }
-}
+});
+
+app.listen(PORT, () => {
+  console.log(`Server running on http://localhost:${PORT}`);
+});
