@@ -1,44 +1,57 @@
-const express = require("express");
-const fs = require("fs");
-const app = express();
-const PORT = process.env.PORT || 3000;
+// /api/enrich.js
+import fs from "fs";
+import fetch from "node-fetch";
 
-// GET endpoint
-app.get("/episodes", (req, res) => {
+const TMDB_API_KEY = process.env.TMDB_API_KEY;
+
+const CLEAN_REGEX = new RegExp(
+  [
+    "\\(\\d{4}\\)", "\\b\\d{4}\\b",
+    "480p","720p","1080p","2160p","4k","hdrip","webrip","bluray","dvdrip",
+    "hindi","tamil","telugu","malayalam","kannada","marathi","bengali",
+    "punjabi","gujarati","bhojpuri","urdu","odia",
+    "dual audio","dubbed","uncut"
+  ].join("|"),
+  "gi"
+);
+
+function cleanMovieName(name) {
+  return name.replace(CLEAN_REGEX, "")
+             .replace(/[^a-zA-Z0-9\s:]/g, " ")
+             .replace(/\s+/g, " ")
+             .trim();
+}
+
+async function getTMDBData(movieName) {
+  const cleanName = cleanMovieName(movieName);
+  const query = encodeURIComponent(cleanName);
+  const searchUrl = `https://api.themoviedb.org/3/search/movie?api_key=${TMDB_API_KEY}&query=${query}`;
+
+  const res = await fetch(searchUrl);
+  const data = await res.json();
+  if (!data.results?.length) return null;
+
+  const movie = data.results[0];
+  return {
+    tmdb_id: movie.id,
+    title: movie.title,
+    release_date: movie.release_date,
+    overview: movie.overview,
+    rating: movie.vote_average,
+    poster: movie.poster_path ? `https://image.tmdb.org/t/p/w500${movie.poster_path}` : null,
+    backdrop: movie.backdrop_path ? `https://image.tmdb.org/t/p/original${movie.backdrop_path}` : null
+  };
+}
+
+export default async function handler(req, res) {
   try {
-    const html = fs.readFileSync("table.html", "utf-8");
-    const rowRegex = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
-    const rows = [...html.matchAll(rowRegex)];
-
-    const data = [];
-
-    rows.forEach(row => {
-      const rowContent = row[1];
-
-      const linkMatch = rowContent.match(/<a href="([^"]+)">([^<]+)<\/a>/i);
-      if (!linkMatch) return;
-
-      const href = linkMatch[1];
-      const title = linkMatch[2];
-
-      if (!href.toLowerCase().endsWith(".mp4")) return;
-
-      const dateMatch = rowContent.match(/<td>(\d{2}-\w{3}-\d{4} \d{2}:\d{2})<\/td>/i);
-      const date = dateMatch ? dateMatch[1] : "";
-
-      const sizeMatch = rowContent.match(/<td>([\d\.]+M)<\/td>/i);
-      const size = sizeMatch ? sizeMatch[1] : "";
-
-      data.push({ href, title, date, size });
-    });
-
-    res.json(data); // JSON response
+    const movies = JSON.parse(fs.readFileSync("movie.json", "utf-8"));
+    for (let i = 0; i < movies.length; i++) {
+      const tmdbData = await getTMDBData(movies[i].name);
+      if (tmdbData) movies[i] = { ...movies[i], ...tmdbData };
+    }
+    res.status(200).json(movies);
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Failed to parse table" });
+    res.status(500).json({ error: err.message });
   }
-});
-
-app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
-});
+}
