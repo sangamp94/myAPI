@@ -1,57 +1,55 @@
-// /api/enrich.js
 import fs from "fs";
 import fetch from "node-fetch";
 
-const TMDB_API_KEY = process.env.TMDB_API_KEY;
+const API_KEY = "17a72da2e7a36a11f6e658b6c3b07a84";
 
-const CLEAN_REGEX = new RegExp(
-  [
-    "\\(\\d{4}\\)", "\\b\\d{4}\\b",
-    "480p","720p","1080p","2160p","4k","hdrip","webrip","bluray","dvdrip",
-    "hindi","tamil","telugu","malayalam","kannada","marathi","bengali",
-    "punjabi","gujarati","bhojpuri","urdu","odia",
-    "dual audio","dubbed","uncut"
-  ].join("|"),
-  "gi"
+// Load your input list
+const inputMovies = JSON.parse(fs.readFileSync("movie.json", "utf-8"));
+
+// Load TMDB dump
+const dump = fs.readFileSync("movie_ids_08_23_2025.json", "utf-8")
+  .split("\n")
+  .filter(Boolean)
+  .map(line => JSON.parse(line));
+
+// Build a quick lookup map
+const tmdbMap = new Map(
+  dump.map(m => [m.original_title.toLowerCase(), m.id])
 );
 
-function cleanMovieName(name) {
-  return name.replace(CLEAN_REGEX, "")
-             .replace(/[^a-zA-Z0-9\s:]/g, " ")
-             .replace(/\s+/g, " ")
-             .trim();
+// Helper: fetch details from TMDB API
+async function getMovieDetails(id) {
+  const res = await fetch(
+    `https://api.themoviedb.org/3/movie/${id}?api_key=${API_KEY}&language=en-US`
+  );
+  if (!res.ok) return null;
+  return res.json();
 }
 
-async function getTMDBData(movieName) {
-  const cleanName = cleanMovieName(movieName);
-  const query = encodeURIComponent(cleanName);
-  const searchUrl = `https://api.themoviedb.org/3/search/movie?api_key=${TMDB_API_KEY}&query=${query}`;
-
-  const res = await fetch(searchUrl);
-  const data = await res.json();
-  if (!data.results?.length) return null;
-
-  const movie = data.results[0];
-  return {
-    tmdb_id: movie.id,
-    title: movie.title,
-    release_date: movie.release_date,
-    overview: movie.overview,
-    rating: movie.vote_average,
-    poster: movie.poster_path ? `https://image.tmdb.org/t/p/w500${movie.poster_path}` : null,
-    backdrop: movie.backdrop_path ? `https://image.tmdb.org/t/p/original${movie.backdrop_path}` : null
-  };
-}
-
-export default async function handler(req, res) {
-  try {
-    const movies = JSON.parse(fs.readFileSync("movie.json", "utf-8"));
-    for (let i = 0; i < movies.length; i++) {
-      const tmdbData = await getTMDBData(movies[i].name);
-      if (tmdbData) movies[i] = { ...movies[i], ...tmdbData };
+(async () => {
+  const enriched = [];
+  for (let movie of inputMovies) {
+    const id = tmdbMap.get(movie.name.toLowerCase());
+    if (id) {
+      const details = await getMovieDetails(id);
+      if (details) {
+        enriched.push({
+          ...movie,
+          tmdb_id: id,
+          title: details.title,
+          overview: details.overview,
+          release_date: details.release_date,
+          genres: details.genres.map(g => g.name),
+          poster: `https://image.tmdb.org/t/p/w500${details.poster_path}`,
+          runtime: details.runtime,
+          vote_average: details.vote_average,
+        });
+      }
+    } else {
+      enriched.push(movie); // keep original if not matched
     }
-    res.status(200).json(movies);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
   }
-}
+
+  fs.writeFileSync("output.json", JSON.stringify(enriched, null, 2));
+  console.log("✅ Done! Created output.json");
+})();
