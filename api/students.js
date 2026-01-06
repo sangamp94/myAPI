@@ -1,35 +1,57 @@
-import pool from '../lib/db.js';
+const BIN_ID = process.env.JSONBIN_BIN_ID;
+const API_KEY = process.env.JSONBIN_API_KEY;
 
 export default async function handler(req, res) {
   try {
-    // GET all students
+    const url = `https://api.jsonbin.io/v3/b/${BIN_ID}`;
+
+    // GET students
     if (req.method === 'GET') {
-      const result = await pool.query(
-        'SELECT * FROM students ORDER BY id DESC'
-      );
-      return res.status(200).json(result.rows);
+      const response = await fetch(url, {
+        headers: {
+          'X-Master-Key': API_KEY
+        }
+      });
+      const data = await response.json();
+      return res.status(200).json(data.record.students);
     }
 
-    // POST new student
+    // POST student
     if (req.method === 'POST') {
       const { name, phone } = req.body;
 
       if (!name) {
-        return res.status(400).json({ error: 'Name is required' });
+        return res.status(400).json({ error: 'Name required' });
       }
 
-      const result = await pool.query(
-        'INSERT INTO students(name, phone) VALUES($1, $2) RETURNING *',
-        [name, phone || null]
-      );
+      // get existing
+      const getRes = await fetch(url, {
+        headers: { 'X-Master-Key': API_KEY }
+      });
+      const data = await getRes.json();
 
-      return res.status(201).json(result.rows[0]);
+      data.record.students.push({
+        id: Date.now().toString(),
+        name,
+        phone
+      });
+
+      // update bin
+      await fetch(url, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Master-Key': API_KEY
+        },
+        body: JSON.stringify(data.record)
+      });
+
+      return res.status(201).json({ success: true });
     }
 
     return res.status(405).json({ error: 'Method not allowed' });
 
-  } catch (error) {
-    console.error(error);
-    return res.status(500).json({ error: 'Internal server error' });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
   }
 }
