@@ -5,18 +5,21 @@ export default async function handler(req, res) {
   try {
     const url = `https://api.jsonbin.io/v3/b/${BIN_ID}`;
 
-    // GET students
+    // 🔹 GET STUDENTS
     if (req.method === 'GET') {
       const response = await fetch(url, {
         headers: {
           'X-Master-Key': API_KEY
         }
       });
-      const data = await response.json();
-      return res.status(200).json(data.record.students);
+
+      const json = await response.json();
+
+      const students = json?.record?.students || [];
+      return res.status(200).json(students);
     }
 
-    // POST student
+    // 🔹 POST STUDENT
     if (req.method === 'POST') {
       const { name, phone } = req.body;
 
@@ -24,16 +27,20 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: 'Name required' });
       }
 
-      // get existing
+      // get existing bin
       const getRes = await fetch(url, {
-        headers: { 'X-Master-Key': API_KEY }
+        headers: {
+          'X-Master-Key': API_KEY
+        }
       });
-      const data = await getRes.json();
+      const json = await getRes.json();
 
-      data.record.students.push({
+      const students = json?.record?.students || [];
+
+      students.push({
         id: Date.now().toString(),
         name,
-        phone
+        phone: phone || null
       });
 
       // update bin
@@ -43,7 +50,7 @@ export default async function handler(req, res) {
           'Content-Type': 'application/json',
           'X-Master-Key': API_KEY
         },
-        body: JSON.stringify(data.record)
+        body: JSON.stringify({ students })
       });
 
       return res.status(201).json({ success: true });
@@ -52,6 +59,7 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
 
   } catch (err) {
+    console.error(err);
     return res.status(500).json({ error: err.message });
   }
 }
