@@ -1,114 +1,132 @@
 const BIN_ID = process.env.JSONBIN_BIN_ID;
 const API_KEY = process.env.JSONBIN_API_KEY;
 
-export default async function handler(req, res) {
-  // ✅ CORS (AI Studio / Browser support)
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,DELETE,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+const BIN_URL = `https://api.jsonbin.io/v3/b/${BIN_ID}`;
 
-  // ✅ Preflight
-  if (req.method === 'OPTIONS') {
+export default async function handler(req, res) {
+  // ✅ CORS (Browser / React / AI Studio safe)
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+
+  if (req.method === "OPTIONS") {
     return res.status(200).end();
   }
 
   try {
-    const url = `https://api.jsonbin.io/v3/b/${BIN_ID}`;
-
-    // 🔹 GET ALL STUDENTS
-    if (req.method === 'GET') {
-      const response = await fetch(url, {
-        headers: { 'X-Master-Key': API_KEY }
+    // 🔹 GET current data from JSONBin
+    const getBinData = async () => {
+      const r = await fetch(`${BIN_URL}/latest`, {
+        headers: { "X-Master-Key": API_KEY }
       });
+      const j = await r.json();
+      return j.record || { students: [] };
+    };
 
-      const json = await response.json();
-      const students = json?.record?.students || [];
+    // 🔹 SAVE data to JSONBin
+    const saveBinData = async (data) => {
+      await fetch(BIN_URL, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Master-Key": API_KEY
+        },
+        body: JSON.stringify(data)
+      });
+    };
 
-      return res.status(200).json(students);
+    /* =========================
+       GET → ALL STUDENTS
+       ========================= */
+    if (req.method === "GET") {
+      const data = await getBinData();
+      return res.status(200).json(data.students || []);
     }
 
-    // 🔹 ADD STUDENT (Name + Phone + Fee)
-    if (req.method === 'POST') {
-      const { name, phone, fee } = req.body || {};
+    /* =========================
+       POST → ADD NEW STUDENT
+       ========================= */
+    if (req.method === "POST") {
+      const student = req.body || {};
 
-      if (!name || !fee) {
+      if (!student.name || !student.monthlyFee) {
         return res.status(400).json({
-          error: 'Name and fee are required'
+          message: "Name and monthlyFee required"
         });
       }
 
-      // get existing data
-      const getRes = await fetch(url, {
-        headers: { 'X-Master-Key': API_KEY }
-      });
-      const json = await getRes.json();
+      const data = await getBinData();
 
-      const students = json?.record?.students || [];
-
-      students.push({
+      const newStudent = {
         id: Date.now().toString(),
-        name,
-        phone: phone || null,
-        fee: Number(fee),
-        joinDate: new Date().toISOString()
-      });
+        name: student.name,
+        phone: student.phone || "",
+        course: student.course || "",
+        joinDate: student.joinDate || new Date().toISOString(),
+        monthlyFee: Number(student.monthlyFee),
+        balance: Number(student.balance ?? student.monthlyFee),
+        attendance: student.attendance || {},
+        feeHistory: student.feeHistory || []
+      };
 
-      await fetch(url, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Master-Key': API_KEY
-        },
-        body: JSON.stringify({ students })
-      });
+      data.students.push(newStudent);
+      await saveBinData(data);
 
-      return res.status(200).json({
-        success: true,
-        message: 'Student added successfully'
-      });
+      return res.status(200).json(newStudent);
     }
 
-    // 🔹 DELETE STUDENT (by id)
-    if (req.method === 'DELETE') {
+    /* =========================
+       PUT → UPDATE STUDENT
+       ========================= */
+    if (req.method === "PUT") {
+      const updated = req.body || {};
+      if (!updated.id) {
+        return res.status(400).json({ message: "Student id required" });
+      }
+
+      const data = await getBinData();
+      const index = data.students.findIndex(s => s.id === updated.id);
+
+      if (index === -1) {
+        return res.status(404).json({ message: "Student not found" });
+      }
+
+      data.students[index] = {
+        ...data.students[index],
+        ...updated
+      };
+
+      await saveBinData(data);
+      return res.status(200).json(data.students[index]);
+    }
+
+    /* =========================
+       DELETE → REMOVE STUDENT
+       ========================= */
+    if (req.method === "DELETE") {
       const { id } = req.body || {};
 
       if (!id) {
-        return res.status(400).json({ error: 'Student id required' });
+        return res.status(400).json({ message: "Student id required" });
       }
 
-      const getRes = await fetch(url, {
-        headers: { 'X-Master-Key': API_KEY }
-      });
-      const json = await getRes.json();
+      const data = await getBinData();
+      const before = data.students.length;
 
-      let students = json?.record?.students || [];
+      data.students = data.students.filter(s => s.id !== id);
 
-      const before = students.length;
-      students = students.filter(s => s.id !== id);
-
-      if (students.length === before) {
-        return res.status(404).json({ error: 'Student not found' });
+      if (data.students.length === before) {
+        return res.status(404).json({ message: "Student not found" });
       }
 
-      await fetch(url, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Master-Key': API_KEY
-        },
-        body: JSON.stringify({ students })
-      });
-
-      return res.status(200).json({
-        success: true,
-        message: 'Student deleted successfully'
-      });
+      await saveBinData(data);
+      return res.status(200).json({ success: true });
     }
 
-    return res.status(405).json({ error: 'Method not allowed' });
+    return res.status(405).json({ message: "Method not allowed" });
 
   } catch (err) {
-    console.error('API ERROR:', err);
+    console.error("STUDENTS API ERROR:", err);
     return res.status(500).json({ error: err.message });
   }
 }
